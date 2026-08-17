@@ -88,14 +88,19 @@ case "$APP_SOURCE" in
       echo
     fi
     APP_URL="/opt/frappe/apps-local/${APP_NAME}"
-    APP_INFO="lokal aus ${APP_CHECKOUT} @ $(git -C "$APP_CHECKOUT" rev-parse --short HEAD) (Branch ${APP_BRANCH})"
+    APP_COMMIT=$(git -C "$APP_CHECKOUT" rev-parse --short HEAD)
+    APP_INFO="lokal aus ${APP_CHECKOUT} @ ${APP_COMMIT} (Branch ${APP_BRANCH})"
     ;;
   git)
     APP_URL="$APP_REPO_URL"
     if [[ -n "$APP_REPO_TOKEN" ]]; then
       APP_URL="${APP_REPO_URL/https:\/\//https://${APP_REPO_TOKEN}@}"
     fi
+    # Commit-Kürzel des Branch-Kopfes, damit das Image eindeutig benannt
+    # werden kann. Schlägt die Abfrage fehl, wird nur der Haupt-Tag gesetzt.
+    APP_COMMIT=$(git ls-remote "$APP_REPO_URL" "refs/heads/${APP_BRANCH}" 2>/dev/null | cut -c1-7)
     APP_INFO="${APP_REPO_URL} @ ${APP_BRANCH}"
+    [[ -n "$APP_COMMIT" ]] && APP_INFO="${APP_INFO} (${APP_COMMIT})"
     [[ -n "$APP_REPO_TOKEN" ]] && APP_INFO="${APP_INFO} (mit Token)"
     ;;
   *)
@@ -117,19 +122,33 @@ cat >"$APPS_JSON" <<EOF
 ]
 EOF
 
+# Zusaetzlicher, eindeutiger Tag mit dem App-Commit. Der bewegliche Tag
+# (:16) zeigt immer auf den neuesten Build, der Commit-Tag bleibt bestehen --
+# damit ist ein Rueckweg auf einen frueheren Stand ueberhaupt erst moeglich.
+VERSION_TAG=""
+[[ -n "${APP_COMMIT:-}" ]] && VERSION_TAG="${CUSTOM_TAG}-${APP_COMMIT}"
+
 echo "-------------------------------------------------------------"
 echo " Image      : ${CUSTOM_IMAGE}:${CUSTOM_TAG}"
+[[ -n "$VERSION_TAG" ]] && \
+echo "              ${CUSTOM_IMAGE}:${VERSION_TAG}"
 echo " Frappe     : ${FRAPPE_PATH} @ ${FRAPPE_BRANCH}"
 echo " Vereins-App: ${APP_INFO}"
 echo "-------------------------------------------------------------"
 
+TAGS=(--tag "${CUSTOM_IMAGE}:${CUSTOM_TAG}")
+[[ -n "$VERSION_TAG" ]] && TAGS+=(--tag "${CUSTOM_IMAGE}:${VERSION_TAG}")
+
 DOCKER_BUILDKIT=1 docker build \
   "${BUILD_ARGS[@]}" \
   --secret "id=apps_json,src=${APPS_JSON}" \
-  --tag "${CUSTOM_IMAGE}:${CUSTOM_TAG}" \
+  "${TAGS[@]}" \
   --file Containerfile \
   .
 
 echo
 echo "Fertig: ${CUSTOM_IMAGE}:${CUSTOM_TAG}"
+if [[ -n "$VERSION_TAG" ]]; then
+  echo "        ${CUSTOM_IMAGE}:${VERSION_TAG}  (fuer einen Rueckweg notieren)"
+fi
 echo "Weiter mit:  ./verein.sh up"

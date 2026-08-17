@@ -8,3 +8,6 @@ backups/
 # Arbeitskopie der App (wird von build.sh geklont)
 apps-local/*
 !apps-local/.gitkeep
+
+# depscan reports (contain unpatched vulnerability details)
+.depscan/

@@ -44,10 +44,11 @@ cmd=${1:-}
 
 case "$cmd" in
   up)
+    # 'up -d' kehrt erst zurueck, wenn create-site fertig ist -- die
+    # uebrigen Dienste warten per depends_on auf dessen Abschluss.
+    echo "Starte (beim ersten Mal dauert die Site-Anlage ein paar Minuten) ..."
     dc up -d "$@"
-    echo
-    echo "Warte auf die Site (das erste Mal dauert es ein paar Minuten) ..."
-    dc logs -f create-site || true
+    dc logs --tail=15 create-site || true
     echo
     echo "URL      : http://localhost:${PORT}   (auch: http://${SITE}:${PORT})"
     echo "Benutzer : Administrator"
@@ -62,9 +63,31 @@ case "$cmd" in
   console)  dc exec backend bench --site "$SITE" console ;;
   migrate)  dc exec backend bench --site "$SITE" migrate ;;
   update)
+    # Vor dem Update sichern: 'bench migrate' laeuft beim Hochfahren
+    # automatisch, und ein mittendrin gescheiterter Patch hinterlaesst eine
+    # halb migrierte Datenbank. Mit --no-backup abschaltbar.
+    if [[ "${1:-}" == "--no-backup" ]]; then
+      echo "HINWEIS: Update ohne vorherige Sicherung (--no-backup)." >&2
+    elif [[ -z "$(dc ps -q backend 2>/dev/null)" ]]; then
+      # Nicht stillschweigend überspringen -- genau dieser Fall tritt nach
+      # einem Neustart des Rechners auf, und dann fehlt die Sicherung
+      # ausgerechnet dann, wenn man sie am ehesten braucht.
+      echo "HINWEIS: Stack läuft nicht, es wurde keine Sicherung angelegt." >&2
+      echo "         Für eine Sicherung vorher: ./verein.sh up && ./verein.sh backup" >&2
+      echo
+    else
+      echo "Sichere vor dem Update ..."
+      "$0" backup
+      echo
+    fi
     ./build.sh --refresh
     dc up -d --force-recreate
-    dc logs -f create-site || true
+    dc logs --tail=15 create-site || true
+    echo
+    echo "Aktualisiert. Bei Problemen zurueck auf den vorherigen Stand:"
+    echo "  CUSTOM_TAG in .env auf den vorherigen Commit-Tag setzen, dann ./verein.sh up"
+    docker images "${CUSTOM_IMAGE:-dms-verein/frappe}" \
+      --format "  {{.Tag}}  ({{.CreatedSince}})" | head -6
     ;;
   backup)
     mkdir -p backups

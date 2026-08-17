@@ -133,15 +133,73 @@ eintragen. Der Token wird als BuildKit-Secret übergeben und landet damit
 ./verein.sh reset                  # ALLES löschen (fragt nach)
 ```
 
-### App-Änderungen übernehmen
+---
 
-Das Image ist unveränderlich — Code-Änderungen kommen ausschließlich über einen
-neuen Build hinein:
+## Aktualisieren
+
+Das Image ist unveränderlich. Neue App-Stände, neue Frappe-Versionen und
+Schema-Änderungen kommen ausschließlich über einen neuen Build herein — die
+Daten liegen davon getrennt in Docker-Volumes und bleiben unberührt.
 
 ```bash
-git push                 # im App-Repo
-./verein.sh update       # baut das Image neu, startet neu, migriert
+./verein.sh update
 ```
+
+Das erledigt vier Schritte:
+
+1. **Sicherung** der Site inklusive Dateien nach `backups/`
+2. **Neubau** des Images mit `--refresh` — Frappe und die App werden frisch
+   geklont, der Rest kommt aus dem Layer-Cache
+3. **Neustart** der Container mit dem neuen Image
+4. **`bench migrate`** — läuft automatisch im `create-site`-Job, sobald eine
+   Site existiert. Damit ziehen Schema-Änderungen aus Frappe *und* aus der App
+   nach
+
+Schritt 1 lässt sich mit `./verein.sh update --no-backup` überspringen. Ich
+würde es nicht tun: `bench migrate` führt Patches aus, und ein mittendrin
+gescheiterter Patch hinterlässt eine halb migrierte Datenbank.
+
+### Zurück auf einen früheren Stand
+
+Jeder Build setzt zwei Tags: den beweglichen `:16` und einen festen mit dem
+App-Commit, etwa `:16-dc31481`. Nur deshalb gibt es überhaupt einen Rückweg —
+sonst hätte der nächste Build den vorherigen Stand überschrieben.
+
+```bash
+docker images dms-verein/frappe     # verfügbare Stände ansehen
+```
+
+Dann in der `.env` den gewünschten Tag eintragen und neu starten:
+
+```dotenv
+CUSTOM_TAG=16-dc31481
+```
+
+```bash
+./verein.sh up
+```
+
+Wichtig: Das setzt **nur den Code** zurück, nicht die Datenbank. Hat eine
+Migration das Schema bereits verändert, kommt der alte Code damit
+möglicherweise nicht zurecht. Für einen vollständigen Rückweg zusätzlich die
+Sicherung einspielen:
+
+```bash
+./verein.sh bench --site verein.localhost restore backups/<datei>.sql.gz
+```
+
+### Frappe-Version festlegen
+
+`FRAPPE_BRANCH=version-16` ist ein **beweglicher Branch** — jeder Build mit
+`--refresh` holt den jeweils neuesten Stand. Für reproduzierbare Builds
+stattdessen ein Tag eintragen:
+
+```dotenv
+FRAPPE_BRANCH=v16.30.0
+```
+
+Dann bestimmst du selbst, wann eine neue Frappe-Version hereinkommt. Dasselbe
+gilt für `APP_BRANCH`, dort ist auch ein Tag oder ein Commit möglich.
 
 ---
 
